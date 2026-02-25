@@ -76,5 +76,20 @@ podman run -d \
   semantic-claws:local
 ```
 
+### Testing from Scratch
+
+To completely reset and re-test the installation:
+
+```bash
+# 1. Download the cleanup script
+curl -sSL -o setup-semanticclaws.sh https://github.com/simplysemantics/semantic-claws/main/setup-semanticclaws.sh
+
+# 2. Make executable & run
+chmod +x setup-semanticclaws.sh
+
+# 3. Run cleanup first to reset state
+./cleanup-semanticclaws.sh
+```
+
 ## Troubleshooting
 If you run into Podman setup issues (common on macOS), see our [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) guide.
