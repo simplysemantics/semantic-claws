@@ -6,22 +6,17 @@
 # Purpose: Small, trusted, low-cost SaaS component for local AI tooling
 #          High-volume adoption focus — keep it simple, private, secure.
 #
-# This script sets up a rootless Podman environment for OpenClaw (or similar local AI).
-# Designed for US/North America market: emphasizes data locality (no cloud telemetry),
-# least privilege, auditability, and compliance-friendly design (helps with CCPA etc.).
+# This script clones upstream OpenClaw, uses their official Dockerfile,
+# applies hardening (secure token, logging, macOS compatibility), and
+# builds a branded local image: semanticclaws:local
 #
 # Security highlights:
 # - Rootless Podman (no daemon, user namespaces)
-# - Dedicated non-root user with strict permissions
-# - Secure temp files outside /tmp
-# - Auto subuid/subgid setup (with safety checks)
-# - Vulnerability scanning hook (Trivy if available)
+# - Secure temp files & token generation
+# - macOS-friendly (skips Linux-only user/subuid steps)
 # - Detailed logging for auditing
 #
-# REVIEW BEFORE RUNNING: curl | bash is convenient but risky.
-# Best: download → inspect → chmod +x → ./setup-podman.sh
-#
-# Version: 2026-02 - SemanticClaws hardened edition
+# Version: 2025-02 - SemanticClaws hardened edition (upstream + memory fix)
 
 set -euo pipefail
 
@@ -29,13 +24,19 @@ set -euo pipefail
 # Branding & Configuration
 # -------------------------------
 readonly COMPANY="Simply Semantics"
-readonly PROJECT="SemanticClaws"
-readonly OPENCLAW_USER="openclaw"
-readonly OPENCLAW_HOME="/opt/${PROJECT:-openclaw}"
+readonly PROJECT="semantic-claws"
+readonly IMAGE_NAME="${PROJECT}:local"
+readonly UPSTREAM_REPO="https://github.com/openclaw/openclaw.git"
+readonly UPSTREAM_REF="main"  # Pin to tag if needed, e.g., "vX.Y.Z"
+readonly WORK_DIR="$(mktemp -d -t semanticclaws-setup.XXXXXX)"
+readonly OPENCLAW_HOME="${HOME}/.local/share/${PROJECT}"
 readonly LOG_FILE="${OPENCLAW_HOME}/setup.log"
 readonly TMP_DIR="${OPENCLAW_HOME}/.tmp"
 
-# Colors for output
+# Detect macOS
+readonly IS_MACOS=$([[ "$(uname -s)" == "Darwin" ]] && echo true || echo false)
+
+# Colors
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
 readonly YELLOW='\033[1;33m'
@@ -60,59 +61,58 @@ require_cmd() {
     command_exists "$1" || error "$1 is required but not installed. Please install it first."
 }
 
-run_as_openclaw() {
-    sudo -u "$OPENCLAW_USER" -- "$@"
+cleanup() {
+    rm -rf "$WORK_DIR" 2>/dev/null || true
+    info "Cleaned up temporary clone directory."
 }
+trap cleanup EXIT INT TERM
 
-run_root() {
-    sudo "$@"
+increase_podman_memory() {
+    if $IS_MACOS; then
+        info "Checking Podman machine memory (macOS VM)..."
+        local current_mem
+        current_mem=$(podman machine inspect --format '{{.Resources.Memory}}' podman-machine-default 2>/dev/null || echo "unknown")
+        if [[ "$current_mem" == "unknown" ]]; then
+            info "Podman machine not found — initializing with higher memory..."
+            podman machine init --memory 8192 podman-machine-default || warn "Init failed — run 'podman machine init --memory 8192' manually if needed"
+            podman machine start podman-machine-default
+        elif [[ "$current_mem" -lt 8192 ]]; then
+            info "Increasing Podman VM memory to 8GB (from ~$current_mem MB) for build stability..."
+            podman machine stop podman-machine-default || true
+            podman machine set --memory 8192 podman-machine-default
+            podman machine start podman-machine-default
+        else
+            info "Podman VM memory already sufficient (~$current_mem MB)"
+        fi
+    fi
 }
 
 # -------------------------------
 # Main Setup
 # -------------------------------
 main() {
+    mkdir -p "$OPENCLAW_HOME" "$TMP_DIR" || error "Failed to create $OPENCLAW_HOME"
+    chmod 700 "$OPENCLAW_HOME" "$TMP_DIR"
+
     info "Starting ${PROJECT} secure rootless Podman setup by ${COMPANY}"
-
-    # Create secure home + log dir
-    run_root mkdir -p "$OPENCLAW_HOME" "$TMP_DIR"
-    run_root chown -R "$OPENCLAW_USER":"$OPENCLAW_USER" "$OPENCLAW_HOME"
-    run_root chmod 700 "$OPENCLAW_HOME" "$TMP_DIR"
-
-    # Redirect all output to log too
     exec > >(tee -a "$LOG_FILE") 2>&1
 
-    # 1. Ensure Podman is installed
+    if $IS_MACOS; then
+        info "macOS detected — running fully rootless in Podman VM."
+    fi
+
     require_cmd podman
     podman --version || error "Podman not functional"
 
-    # 2. Create dedicated user if missing
-    if ! id "$OPENCLAW_USER" >/dev/null 2>&1; then
-        info "Creating dedicated user: $OPENCLAW_USER"
-        run_root useradd --system --shell /usr/sbin/nologin \
-            --home-dir "$OPENCLAW_HOME" --create-home \
-            "$OPENCLAW_USER" || error "Failed to create user"
-    fi
+    increase_podman_memory  # Fix VM memory for heavy builds
 
-    # 3. Configure subuid/subgid if missing (critical for rootless)
-    if ! grep -q "^${OPENCLAW_USER}:" /etc/subuid || ! grep -q "^${OPENCLAW_USER}:" /etc/subgid; then
-        warn "subuid/subgid not configured for $OPENCLAW_USER — attempting safe auto-setup"
-        local range_start=100000
-        local range_size=65536
+    info "Cloning upstream OpenClaw repo (${UPSTREAM_REF})..."
+    require_cmd git
+    git clone --depth 1 --branch "${UPSTREAM_REF}" "${UPSTREAM_REPO}" "$WORK_DIR" \
+        || error "Failed to clone upstream repo"
 
-        # Simple conflict check
-        if grep -q "${range_start}" /etc/subuid || grep -q "${range_start}" /etc/subgid; then
-            error "UID/GID range conflict at ${range_start}. Manually configure /etc/subuid and /etc/subgid."
-        fi
+    cd "$WORK_DIR" || error "Failed to cd into clone dir"
 
-        run_root sh -c "echo '${OPENCLAW_USER}:${range_start}:${range_size}' >> /etc/subuid"
-        run_root sh -c "echo '${OPENCLAW_USER}:${range_start}:${range_size}' >> /etc/subgid"
-        info "Added subuid/subgid range ${range_start}-${range_start+$range_size-1}"
-    else
-        info "subuid/subgid already configured"
-    fi
-
-    # 4. Generate secure gateway token
     info "Generating secure gateway token..."
     local token
     if command_exists openssl; then
@@ -124,7 +124,6 @@ main() {
     fi
     [ -z "$token" ] && error "Failed to generate token"
 
-    # 5. Create secure .env
     local env_file="${OPENCLAW_HOME}/.env"
     cat > "$env_file" << EOF
 # Generated by ${PROJECT} setup - ${COMPANY}
@@ -132,39 +131,31 @@ OPENCLAW_GATEWAY_TOKEN=${token}
 OPENCLAW_HOME=${OPENCLAW_HOME}
 # Add other vars as needed (e.g., model paths, ports)
 EOF
-    run_root chown "$OPENCLAW_USER":"$OPENCLAW_USER" "$env_file"
-    run_root chmod 600 "$env_file"
+    chmod 600 "$env_file"
     info "Secure .env created at ${env_file}"
 
-    # 6. Build the image (assumes Dockerfile exists in current dir or repo)
-    info "Building container image..."
-    local image_name="${PROJECT:-openclaw}:local"
-    TMP_IMAGE="${TMP_DIR}/$(mktemp -u build-XXXXXX.tar)"
-
-    trap 'rm -f "$TMP_IMAGE" 2>/dev/null' EXIT
-
-    run_as_openclaw podman build -t "$image_name" -f Dockerfile . \
-        || error "Image build failed"
-
-    # Optional: vulnerability scan (Trivy preferred)
-    if command_exists trivy; then
-        info "Running Trivy vulnerability scan..."
-        trivy image --exit-code 1 --no-progress --severity CRITICAL,HIGH "$image_name" \
-            || warn "Trivy found issues — review before production use"
-    else
-        warn "Trivy not found — skipping vuln scan (install for better security)"
-    fi
-
-    # 7. Basic systemd quadlet recommendation
-    info "Setup complete. For reliable auto-start, use systemd quadlets (recommended):"
-    info "  → Place .container / .service files in ~/.config/containers/systemd/"
-    info "  → Example: podman generate systemd --new --name --files $image_name"
-    info "Network note: Podman 5.0+ defaults to pasta (more secure than slirp4netns). Consider --network=pasta"
+    info "Building branded image using upstream Dockerfile with increased Node heap..."
+    # Use upstream Dockerfile but inject higher heap limit for build stability
+    podman build \
+        --build-arg NODE_OPTIONS="--max-old-space-size=6144" \
+        -t "$IMAGE_NAME" \
+        -f Dockerfile . \
+        || error "Image build failed (upstream Dockerfile + heap fix)"
 
     info "${GREEN}Setup finished successfully!${NC}"
+    info "Image: ${IMAGE_NAME}"
     info "Logs: ${LOG_FILE}"
-    info "Review everything — especially token and permissions — before exposing ports."
-    info "For enterprise use or SaaS resale: consider adding secret rotation, SELinux, Falco monitoring."
+    info "Data & config: ${OPENCLAW_HOME}"
+    info "For production: systemd quadlets (Linux) or Podman Desktop auto-start (macOS)."
+    info "Review token in .env and test with:"
+    info "  podman run -d \\"
+    info "    --name semantic-claws \\"
+    info "    -p 18789:18789 -p 18791:18791 \\"
+    info "    -v ${OPENCLAW_HOME}:/data \\"
+    info "    ${IMAGE_NAME}"
+    info "  Then open dashboard at http://localhost:18789"
+    info "  or connect via ws://localhost:18789"
+
 }
 
 main "$@"
