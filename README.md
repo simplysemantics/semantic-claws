@@ -46,7 +46,7 @@ We deeply appreciate their work on a flexible, personal AI assistant gateway —
 
 ```bash
 # 1. Download the script
-curl -sSL -o setup-semanticclaws.sh https://github.com/simplysemantics/semantic-claws/main/setup-semanticclaws.sh
+curl -sSL -o setup-semanticclaws.sh https://raw.githubusercontent.com/simplysemantics/semantic-claws/main/setup-semanticclaws.sh
 
 # 2. Inspect (very important!)
 cat setup-semanticclaws.sh   # or open in your editor
@@ -82,8 +82,8 @@ To completely reset and re-test the installation:
 
 ```bash
 # 1. Download the cleanup script
-curl -sSL -o setup-semanticclaws.sh https://github.com/simplysemantics/semantic-claws/main/setup-semanticclaws.sh
-
+curl -sSL -o setup-semanticclaws.sh https://raw.githubusercontent.com/simplysemantics/semantic-claws/main/setup-semanticclaws.sh
+setup-semanticclaws.sh
 # 2. Make executable & run
 chmod +x setup-semanticclaws.sh
 
