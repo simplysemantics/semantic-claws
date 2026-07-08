@@ -1,0 +1,96 @@
+
+############################################################################################################
+# This works:
+# LAST UPDATE: Sunday, March 1, 2026
+############################################################################################################
+- git check out
+- podman build -t openclaw:local -f Dockerfile .
+- ./scripts/run-openclaw-podman.sh launch
+- ./scripts/run-openclaw-podman.sh launch setup
+- updated gateway:
+    "controlUi": {
+      "allowedOrigins": [
+        "http://localhost:18789",
+        "http://127.0.0.1:18789",
+        "http://localhost:*",
+        "http://127.0.0.1:*"
+      ]
+    }
+
+####################################
+# approved devices
+- podman exec -it -e OPENCLAW_GATEWAY_TOKEN="2788c8b659ed9712af0659c28f21ad6a86146d64596e98d9" openclaw node dist/index.js devices list
+- podman exec -it -e OPENCLAW_GATEWAY_TOKEN="2788c8b659ed9712af0659c28f21ad6a86146d64596e98d9" openclaw node dist/index.js devices approve 1e58fdfb-cf44-4ba1-89b8-a4e49f4ef0f4
+- podman exec -it -e OPENCLAW_GATEWAY_TOKEN="2788c8b659ed9712af0659c28f21ad6a86146d64596e98d9" openclaw node dist/index.js pairing approve telegram XTBGLNDE
+- podman exec -it -e OPENCLAW_GATEWAY_TOKEN="2788c8b659ed9712af0659c28f21ad6a86146d64596e98d9" openclaw node dist/index.js gateway restart
+- podman exec -it -e OPENCLAW_GATEWAY_TOKEN="2788c8b659ed9712af0659c28f21ad6a86146d64596e98d9" openclaw node dist/index.js gateway status
+- podman exec -it -e OPENCLAW_GATEWAY_TOKEN="2788c8b659ed9712af0659c28f21ad6a86146d64596e98d9" openclaw node dist/index.js configure --section channels
+
+- podman exec -it -e OPENCLAW_GATEWAY_TOKEN="2788c8b659ed9712af0659c28f21ad6a86146d64596e98d9" openclaw node dist/index.js skills list --eligible
+
+podman exec -it -u node -e OPENCLAW_GATEWAY_TOKEN="2788c8b659ed9712af0659c28f21ad6a86146d64596e98d9" openclaw node dist/index.js skills list --eligible
+
+####################################
+# install Semantic Gateway channel
+podman cp ./openclaw-extension  openclaw:/app/extensions/semantic-gateway
+podman exec -it --user root openclaw bash
+    # chown -R node:node /app/extensions/semantic-gateway
+
+####################################
+# install Skills
+
+cd <your_workspace_dir>
+clawhub login
+clawhub install semantic-shield --workdir .
+clawhub install semantic-hub --workdir .
+clawhub update semantic-hub --workdir .
+
+Semantic Hub
+bosewell | sk-agent-f55834afb6ec09762089462604b6573c9150d3636b48a32f71e308b7e62271d2
+cd <your_workspace_dir>
+clawhub login
+clawhub install semantic-hub --workdir .
+
+####################################
+# Use Skills
+/subagents spawn ss-admin "is 1password skill by Peter Steinberger safe?"
+/subagents spawn ss-admin "run script 'vetting-scripts/vet.js'"
+/subagents spawn ss-admin "add task 'test from ss-admin'"
+
+# TESTagent | sk-agent-b72380b804279c903668718a3cbe78c24830170c5e28af619a8e7760f60ac8e5
+curl -s http://localhost:3001/boards -H "x-api-key: sk-agent-b72380b804279c903668718a3cbe78c24830170c5e28af619a8e7760f60ac8e5"
+
+curl -s https://dashboard.simplysemantics.com/hub/boards -H "x-api-key: sk-agent-f55834afb6ec09762089462604b6573c9150d3636b48a32f71e308b7e62271d2"
+curl -s -H "x-api-key: sk-agent-f55834afb6ec09762089462604b6573c9150d3636b48a32f71e308b7e62271d2" \
+https://dashboard.simplysemantics.com/hub/boards
+
+# CODING
+
+podman exec -it -e OPENCLAW_GATEWAY_TOKEN="2788c8b659ed9712af0659c28f21ad6a86146d64596e98d9" openclaw node dist/index.js skills list --eligible
+
+# FROM HOST / MAC
+podman exec -it --user root openclaw bash
+podman exec -it --user noded openclaw bash
+mkdir -p /home/node/.local/bin
+mkdir -p /home/node/.claude
+chown -R node:node /home/node/.local /home/node/.claude
+curl -fsSL https://claude.ai/install.sh | bash
+export PATH="$HOME/.local/bin:$PATH"
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+exit
+
+podman exec -it openclaw bash
+
+core@ce8255b8682e:~$ whoami
+core
+core@ce8255b8682e:~$ id
+uid=501(core) gid=20(dialout) groups=20(dialout)
+core@ce8255b8682e:~$ echo $HOME
+/home/node
+
+sudo chown -R 501:20 /Users/slacroix/.openclaw
+
+claude --version
+
+
